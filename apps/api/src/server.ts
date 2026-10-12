@@ -49,6 +49,57 @@ async function persistLastEvent(center: string) {
 app.addHook('onRequest', async (request, reply) => {
   if (request.url.startsWith('/api/') && request.url !== '/api/login' && !(request.session as typeof request.session & {user?:string}).user) return reply.code(401).send({error:'LOGIN_REQUIRED'});
 });
+function decodeXml(value: string) {
+  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+}
+function readRss(xml: string, source: string) {
+  return [...xml.matchAll(/<item[\s\S]*?>([\s\S]*?)<\/item>/g)].slice(0, 8).map(match => {
+    const item = match[1];
+    const field = (name: string) => decodeXml(item.match(new RegExp('<' + name + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + name + '>'))?.[1] ?? '');
+    return { title: field('title'), url: field('link'), publishedAt: field('pubDate'), source };
+  }).filter(item => item.title);
+}
+app.get('/api/trends', async () => {
+  const getFeed = async (url: string, source: string) => {
+    try { const response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { 'user-agent': 'YouTubeShortLab/1.0' } }); return response.ok ? readRss(await response.text(), source) : []; }
+    catch { return []; }
+  };
+  const youtubeKey = process.env.YOUTUBE_DATA_API_KEY;
+  const youtube = youtubeKey ? (async () => {
+    try {
+      const params = new URLSearchParams({ part: 'snippet', chart: 'mostPopular', regionCode: 'NL', maxResults: '8', key: youtubeKey });
+      const response = await fetch('https://www.googleapis.com/youtube/v3/videos?' + params, { signal: AbortSignal.timeout(7000) });
+      if (!response.ok) return [];
+      const payload = await response.json() as { items?: Array<{ id: string; snippet?: { title?: string; channelTitle?: string } }> };
+      return (payload.items ?? []).map(item => ({ title: item.snippet?.title ?? 'YouTube-video', url: 'https://www.youtube.com/watch?v=' + item.id, source: 'YouTube · populair', publishedAt: '', channel: item.snippet?.channelTitle ?? '' }));
+    } catch { return []; }
+  })() : Promise.resolve([]);
+  const [searchTrends, news, youtubeVideos] = await Promise.all([
+    getFeed('https://trends.google.com/trending/rss?geo=NL', 'Google Trends · Nederland'),
+    getFeed('https://news.google.com/rss?hl=nl&gl=NL&ceid=NL:nl', 'Nieuws · Nederland'), youtube
+  ]);
+  return { searchTrends, news, youtube: youtubeVideos, youtubeConfigured: Boolean(youtubeKey), aiConfigured: (process.env.LLM_MODE === 'openai' || process.env.LLM_PROVIDER === 'openai') && Boolean(process.env.LLM_API_KEY), fetchedAt: new Date().toISOString() };
+});
+app.post('/api/scripts/generate', async (request, reply) => {
+  const input = request.body as { topic?: string; audience?: string; goal?: string; tone?: string; duration?: string; trend?: string };
+  const fields = [input?.topic, input?.audience, input?.goal, input?.tone, input?.duration];
+  if (fields.some(value => typeof value !== 'string' || !value.trim() || value.length > 500)) return reply.code(400).send({ error: 'Vul alle scriptvragen in.' });
+  const brief = ['Onderwerp: ' + input.topic, 'Doelgroep: ' + input.audience, 'Doel: ' + input.goal, 'Toon: ' + input.tone, 'Duur: ' + input.duration, input.trend ? 'Trendbron: ' + input.trend : ''].filter(Boolean).join('\n');
+  const aiRequested = process.env.LLM_MODE === 'openai' || process.env.LLM_PROVIDER === 'openai';
+  if (aiRequested && !process.env.LLM_API_KEY) return reply.code(503).send({ error: 'Vul LLM_API_KEY in en herstart de API om echte AI-generatie te gebruiken.' });
+  if (aiRequested && process.env.LLM_API_KEY) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { authorization: 'Bearer ' + process.env.LLM_API_KEY, 'content-type': 'application/json' }, body: JSON.stringify({ model: process.env.LLM_MODEL || 'gpt-4o-mini', instructions: 'Je bent de Nederlandse Shorts-scriptwriter in YouTube Short Lab. Schrijf een origineel, feitelijk voorzichtig script voor een vertical short. Geef een titel, hook, tijdgecodeerde voice-over per scène, beeldsuggestie per scène, schermtekst en CTA. Houd rekening met de gevraagde duur en doelgroep. Verzin geen nieuwsfeiten of trendcijfers; gebruik een trend alleen als inspiratie.', input: brief, max_output_tokens: 1200 }), signal: AbortSignal.timeout(45000) });
+      if (!response.ok) return reply.code(502).send({ error: 'De AI-provider reageerde niet goed. Controleer de AI-instellingen.' });
+      const result = await response.json() as { output_text?: string };
+      if (!result.output_text) return reply.code(502).send({ error: 'De AI heeft geen script teruggestuurd.' });
+      return { script: result.output_text, source: 'openai' };
+    } catch { return reply.code(502).send({ error: 'De AI-provider is niet bereikbaar.' }); }
+  }
+  const topic = input.topic!.trim();
+  const script = 'TITEL\n' + topic + '\n\nHOOK · 0–3 SEC\n“Wist je dat ' + topic.toLowerCase() + ' je kijk op dit onderwerp kan veranderen?”\n\nSCÈNE 1 · INTRO\nVoice-over: “Laten we één idee over ' + topic + ' onder de loep nemen.”\nBeeld: snelle close-up, onderwerp groot in beeld.\nSchermtekst: ' + topic + '\n\nSCÈNE 2 · KERN\nVoice-over: “Begin met wat je al weet. Kijk daarna naar het detail dat vaak over het hoofd wordt gezien.”\nBeeld: twee korte voorbeelden naast elkaar; markeer het verschil.\nSchermtekst: “Let op dit verschil”\n\nSCÈNE 3 · PAY-OFF\nVoice-over: “Zo kun je ' + topic.toLowerCase() + ' voortaan op een nieuwe manier bekijken.”\nBeeld: onthulling of samenvatting met een duidelijke visuele payoff.\nSchermtekst: “Wat zou jij kiezen?”\n\nCTA\n“Volg voor meer korte inzichten en laat jouw kijk achter in de reacties.”\n\nPRODUCTIENOTITIE\nControleer specifieke claims en bronnen voordat je publiceert.';
+  return { script, source: 'mock' };
+});
 app.get('/health', async () => ({ status: 'ok', mode: 'mock' }));
 app.post('/api/login', async (request, reply) => {
   const body = request.body as { password?: string };
