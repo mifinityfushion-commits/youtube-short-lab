@@ -1,12 +1,15 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Float, OrbitControls, Text } from '@react-three/drei';
+import { Float, Line, OrbitControls, Text } from '@react-three/drei';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import ScriptStudio from './ScriptStudio';
 
 type Center = { id: string; name: string; status: string; detail: string; tasks: string[] };
 type State = { mode: string; user: string; cycle: number; day: number; days: number; elixir: number; published: number; goal: number; centers: Center[]; approvals: Array<{ id: string; center: string; task: string; minutes: number; status: string; payload: string }>; events: Array<{ at: string; center: string; message: string }> };
 type Page = 'world' | 'dashboard' | 'analytics' | 'workflow';
+type LabTab = 'overview' | 'team' | 'chat' | 'reflection' | 'studio';
 type ChatLine = { by: 'you' | 'manager'; text: string };
+type OperatorLine = { by: 'you' | 'coo'; text: string; center?: Center; tab?: LabTab };
 const api = async (path: string, init?: RequestInit) => {
   const r = await fetch((import.meta.env.VITE_API_URL ?? '') + path, { ...init, credentials: 'include', headers: { 'content-type': 'application/json', ...init?.headers } });
   const data = await r.json();
@@ -28,12 +31,12 @@ const demoVideos = [
   ['Dit gebeurt er als je 30 dagen volhoudt', '12,6K', '64%', '874', '€ 9,30', '+8%']
 ];
 
-function Island({ center, position, index, onClick }: { center: Center; position: [number, number, number]; index: number; onClick: () => void }) {
+function Island({ center, position, index, onClick, onHover }: { center: Center; position: [number, number, number]; index: number; onClick: () => void; onHover: (active: boolean) => void }) {
   const [hot, setHot] = useState(false);
   const color = colors[center.status] ?? '#35bd90';
   return <group position={position}>
     <Float speed={center.status === 'waiting' ? 1.6 : .7} floatIntensity={.08}>
-      <group scale={hot ? 1.1 : 1} onClick={onClick} onPointerOver={() => setHot(true)} onPointerOut={() => setHot(false)}>
+      <group scale={hot ? 1.1 : 1} onClick={onClick} onPointerOver={() => { setHot(true); onHover(true); }} onPointerOut={() => { setHot(false); onHover(false); }}>
         <mesh position={[0, -.16, 0]} castShadow receiveShadow><cylinderGeometry args={[1.08, .9, .34, 10]} /><meshStandardMaterial color="#c8b692" roughness={.95} /></mesh>
         <mesh position={[0, .03, 0]} receiveShadow><cylinderGeometry args={[1.06, 1.04, .15, 10]} /><meshStandardMaterial color={hot ? '#a0c88b' : '#6f9f78'} roughness={1} /></mesh>
         <mesh position={[0, .19, 0]} castShadow>{index % 3 === 0 ? <cylinderGeometry args={[.48, .59, .28, 12]} /> : index % 3 === 1 ? <boxGeometry args={[.95, .22, .78]} /> : <cylinderGeometry args={[.56, .62, .23, 8]} />}<meshStandardMaterial color="#e7ece8" roughness={.4} /></mesh>
@@ -42,21 +45,37 @@ function Island({ center, position, index, onClick }: { center: Center; position
         {[[.7, -.35], [-.7, -.34], [.7, .4], [-.7, .38]].map(([x, z], i) => <group key={i} position={[x, .2, z]}><mesh position={[0, .12, 0]}><cylinderGeometry args={[.025, .04, .2, 5]} /><meshStandardMaterial color="#826248" /></mesh><mesh position={[0, .28, 0]}><coneGeometry args={[.12, .27, 6]} /><meshStandardMaterial color={i % 2 ? '#408262' : '#578f68'} /></mesh></group>)}
         <mesh position={[.67, .51, .18]}><sphereGeometry args={[.12, 12, 12]} /><meshBasicMaterial color={color} /></mesh>
         <Text position={[0, -.56, 0]} fontSize={.16} maxWidth={2.15} textAlign="center" anchorX="center" color="#143e49" outlineWidth={.014} outlineColor="#ddf1ee">{center.name.replace(' Station', '').replace(' Lab', '').replace(' Dock', '').replace(' Toren', '').replace(' Centrum', '')}</Text>
-        <Text position={[.5, .77, .15]} fontSize={.12} color={center.status === 'waiting' ? '#d87822' : '#177b63'} outlineWidth={.022} outlineColor="white">{center.status === 'waiting' ? '● 1' : '●'}</Text>
+        <Text position={[-.54, .77, .15]} fontSize={.12} color="#286a69" outlineWidth={.022} outlineColor="white">{String(index + 1).padStart(2, '0')}</Text>
+        <Text position={[.5, .77, .15]} fontSize={.12} color={center.status === 'waiting' ? '#d87822' : '#177b63'} outlineWidth={.022} outlineColor="white">●</Text>
       </group>
     </Float>
   </group>;
 }
 
+const centerDescriptions: Record<string, string> = {
+  brainstorm: 'Verzamel onderwerpen, ontdek trends en kies welk idee verder gaat.',
+  strategy: 'Bepaal je doelgroep, doelen en publicatieplanning voor de komende periode.',
+  script: 'Werk een idee uit tot een shortscript met hook, scènes en oproep.',
+  production: 'Maak van een goedgekeurd script een storyboard en controleer de video.',
+  publishing: 'Bereid je video voor op publicatie en beheer de kanaalversies.',
+  analytics: 'Bekijk welke video’s goed presteren en vertaal cijfers naar verbeteringen.',
+  growth: 'Test manieren om bereik, kijkers en terugkerend publiek te vergroten.',
+  expansion: 'Ontwikkel nieuwe formats en breid je kanaalstrategie uit.'
+};
+const islandPositions: Array<[number, number, number]> = [[-4, 0, -2.8], [-1.35, 0, -3.45], [1.35, 0, -3.45], [4, 0, -2.8], [4, 0, 1.45], [1.35, 0, 3.45], [-1.35, 0, 3.45], [-4, 0, 1.45]];
 function WorldMap({ centers, onSelect }: { centers: Center[]; onSelect: (c: Center) => void }) {
+  const [hovered, setHovered] = useState<Center | null>(null);
   return <div className="arena island-map"><Canvas camera={{ position: [0, 8.6, 9.6], fov: 38 }} shadows>
     <color attach="background" args={['#b6dce7']} /><fog attach="fog" args={['#b6dce7', 16, 27]} />
     <ambientLight intensity={1.45} /><directionalLight position={[-5, 9, 5]} intensity={2.1} castShadow />
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -.52, 0]} receiveShadow><circleGeometry args={[10, 72]} /><meshStandardMaterial color="#58aab7" roughness={.33} /></mesh>
     {[0, 1, 2, 3].map(i => <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[0, -.49 + i * .003, 0]}><ringGeometry args={[2.7 + i * 1.17, 2.73 + i * 1.17, 80]} /><meshBasicMaterial color={i % 2 ? '#b3e6df' : '#8cd5d2'} transparent opacity={.35} /></mesh>)}
-    {centers.map((c, i) => { const a = (i / centers.length) * Math.PI * 2 - Math.PI / 2; const r = i === 0 ? 0 : 4.1; return <Island key={c.id} center={c} index={i} position={[Math.cos(a) * r, 0, Math.sin(a) * r]} onClick={() => onSelect(c)} />; })}
+    {centers.slice(0, -1).map((center, i) => { const start = islandPositions[i] ?? [0, 0, 0]; const end = islandPositions[i + 1] ?? [0, 0, 0]; const marker = [start[0] * .45 + end[0] * .55, -.22, start[2] * .45 + end[2] * .55] as [number, number, number]; return <group key={'route-' + center.id}><Line points={[[start[0], -.38, start[2]], [end[0], -.38, end[2]]]} color="#e8d27f" lineWidth={2.5} transparent opacity={.85} /><mesh position={marker} rotation={[Math.PI / 2, Math.atan2(end[0] - start[0], end[2] - start[2]), 0]}><coneGeometry args={[.12, .28, 3]} /><meshBasicMaterial color="#f3d97c" /></mesh></group>; })}
+    {centers.map((c, i) => <Island key={c.id} center={c} index={i} position={islandPositions[i] ?? [0, 0, 0]} onClick={() => onSelect(c)} onHover={active => setHovered(active ? c : current => current?.id === c.id ? null : current)} />)}
     <OrbitControls enablePan={false} minPolarAngle={.68} maxPolarAngle={1.24} minDistance={7.5} maxDistance={15} />
-  </Canvas><div className="map-overlay"><span>◈ JOUW SHORTS-ARCHIPEL</span><small>Sleep om te draaien · klik op een eiland om het lab binnen te gaan</small></div></div>;
+  </Canvas><div className="map-overlay"><span>◈ JOUW SHORTS-ARCHIPEL</span><small>Gouden routepijlen tonen de procesvolgorde · klik op een eiland om het lab binnen te gaan</small></div>
+  {hovered && <div className="island-hover-card" aria-live="polite"><span className="island-hover-kicker">CENTRUM · {statusNames[hovered.status] ?? hovered.status}</span><b>{hovered.name}</b><p>{centerDescriptions[hovered.id] ?? 'Open dit lab om de volgende processtap uit te voeren.'}</p><small><strong>Nu:</strong> {hovered.detail}{hovered.tasks[0] ? ` · ${hovered.tasks[0]}` : ''}</small><span className="island-hover-hint">Klik om het centrum te openen ↗</span></div>}
+  </div>;
 }
 
 function App() {
@@ -65,10 +84,11 @@ function App() {
   const { data, error } = useQuery<State>({ queryKey: ['state'], queryFn: () => api('/api/state'), refetchInterval: 10000, retry: false });
   const [page, setPage] = useState<Page>('world');
   const [selected, setSelected] = useState<Center | null>(null);
-  const [labTab, setLabTab] = useState<'overview' | 'team' | 'chat' | 'reflection'>('overview');
+  const [labTab, setLabTab] = useState<LabTab>('overview');
   const [chats, setChats] = useState<Record<string, ChatLine[]>>({});
   const [draft, setDraft] = useState('');
   const [toast, setToast] = useState('');
+  const [cooOpen, setCooOpen] = useState(false);
   const [range, setRange] = useState('28 dagen');
   const [filter, setFilter] = useState('Alle video’s');
   const pending = useMemo(() => data?.approvals.filter(a => a.status === 'pending') ?? [], [data]);
@@ -104,7 +124,7 @@ function App() {
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-icon">✦</span><div><b>SHORT LAB</b><small>TAHARS VIDEOLAB</small></div></div>
       <nav className="main-nav">{nav.map(([id, icon, name]) => <button key={id} className={page === id ? 'nav-selected' : ''} onClick={() => { setPage(id); setSelected(null); }}><span>{icon}</span>{name}</button>)}</nav>
-      <span className="mock-pill"><i /> VOORBEELDDATA</span><button className="avatar" onClick={() => setLogin(true)}>T</button></header>
+      <button className="coo-open" onClick={() => setCooOpen(true)}><span>◈</span><b>COO</b><small>Hoofdoperator</small></button><span className="mock-pill"><i /> VOORBEELDDATA</span><button className="avatar" onClick={() => setLogin(true)}>T</button></header>
 
     <div className="cycle-row"><div><span className="eyebrow">WERELD 01 · YOUTUBE SHORTS</span><h1>{heading[page]}</h1></div><div className="cycle-pill">CYCLUS {data.cycle} <b>·</b> DAG {data.day}<span className="muted">/{data.days}</span></div></div>
 
@@ -122,9 +142,46 @@ function App() {
     <footer>MADE FOR TAHAR <span>✦</span> FASE 1 · MOCK CLOUD DEMO</footer>
 
     {selected && <LabRoom center={selected} state={data} tab={labTab} setTab={setLabTab} chat={chats[selected.id] ?? []} draft={draft} setDraft={setDraft} sendMessage={sendMessage} onClose={() => setSelected(null)} onApproval={doApproval} onStart={() => void startLab(selected)} />}
+    {cooOpen && <ChiefOperator state={data} onClose={() => setCooOpen(false)} onOpenCenter={(center, tab) => { setSelected(center); setLabTab(tab); setCooOpen(false); }} />}
     {toast && <div className="toast" onClick={() => setToast('')}>{toast}<button>×</button></div>}
     {login && <div className="modal-backdrop" onClick={() => setLogin(false)}><LoginCard onSuccess={() => { setLogin(false); setToast('Ingelogd als Tahar.'); void qc.invalidateQueries({ queryKey: ['state'] }); }} setToast={setToast} /></div>}
   </main>;
+}
+
+function ChiefOperator({ state, onClose, onOpenCenter }: { state: State; onClose: () => void; onOpenCenter: (center: Center, tab: LabTab) => void }) {
+  const [lines, setLines] = useState<OperatorLine[]>([{ by: 'coo', text: 'Hoi, ik ben de hoofdoperator van je Shorts-wereld. Ik houd de eilandstatussen en openstaande besluiten bij. Stel gerust een vraag; ik wijs je naar het juiste team en kan het centrum voor je openen.' }]);
+  const [draft, setDraft] = useState('');
+  const pending = state.approvals.filter(a => a.status === 'pending');
+  const answer = (question: string) => {
+    const q = question.toLowerCase();
+    const keywords: Record<string, string[]> = { brainstorm: ['idee', 'brainstorm', 'trend', 'onderwerp'], strategy: ['strategie', 'planning', 'kalender', 'doelgroep'], script: ['script', 'hook', 'schrijven'], production: ['video', 'productie', 'runway', 'montage'], publishing: ['publiceer', 'publicatie', 'upload', 'plaatsen'], analytics: ['analyse', 'views', 'weergaven', 'omzet', 'prestat'], growth: ['groei', 'bereik', 'abonnees'], expansion: ['uitbreid', 'format'] };
+    let target = state.centers.find(c => q.includes(c.name.toLowerCase()) || q.includes(c.id));
+    if (!target) target = state.centers.find(c => keywords[c.id]?.some(word => q.includes(word)));
+    if (/overzicht|status|hoe gaat|wat speelt|aandacht/.test(q)) {
+      const active = state.centers.filter(c => c.status === 'running').length;
+      const focus = pending[0];
+      const focusCenter = focus && state.centers.find(c => c.id === focus.center);
+      return { text: `Er zijn ${active} actieve labs en ${pending.length} besluiten die op jou wachten. ${focus ? `De eerstvolgende stap is “${focus.task}” in ${focusCenter?.name ?? 'een centrum'}.` : 'Er staat geen akkoord open; je kunt een lab starten of een volgend idee uitwerken.'}`, center: focusCenter, tab: focus ? 'overview' as LabTab : undefined };
+    }
+    if (/vast|probleem|blokk|hulp|oplos|akkoord|wacht/.test(q) && pending.length) {
+      const approval = pending.find(item => !target || item.center === target.id) ?? pending[0];
+      const approvalCenter = state.centers.find(c => c.id === approval.center);
+      return { text: `Ik zie een open besluit: “${approval.task}”. Open het centrum om akkoord te geven of een wijziging terug te sturen.`, center: approvalCenter, tab: 'overview' as LabTab };
+    }
+    if (!target) target = state.centers.find(c => c.status === 'waiting') ?? state.centers[0];
+    const task = target.tasks[0] ? ` De huidige taak is “${target.tasks[0]}”.` : '';
+    const next = target.status === 'waiting' ? ' Dit centrum wacht op jouw input.' : target.status === 'locked' ? ' Dit centrum is nog vergrendeld.' : ' In het centrum vind je de manager, medewerkers en processtappen.';
+    return { text: `${target.name} is het juiste eiland voor dit onderwerp.${task}${next} Open het centrum om de manager te spreken of een open stap af te handelen.`, center: target, tab: 'overview' as LabTab };
+  };
+  const send = (value: string) => { const question = value.trim(); if (!question) return; const response = answer(question); setLines(current => [...current, { by: 'you', text: question }, { by: 'coo', ...response }]); setDraft(''); };
+  return <div className="coo-backdrop" onClick={onClose}><section className="coo-panel" onClick={event => event.stopPropagation()}>
+    <header className="coo-header"><div className="coo-symbol">◈</div><div><span className="eyebrow">OVERKOEPELEND MANAGEMENT</span><h2>Hoofdoperator · COO</h2><small>Coördineert alle eilanden en helpt blokkades te routeren</small></div><button className="close" onClick={onClose}>×</button></header>
+    <div className="coo-summary"><span><b>{state.centers.filter(c => c.status === 'running').length}</b> actieve labs</span><span><b>{pending.length}</b> open besluiten</span><small>Wereldstatus · {state.centers.length} centra</small></div>
+    <div className="coo-messages">{lines.map((line, i) => <article className={'coo-line ' + (line.by === 'you' ? 'coo-from-you' : '')} key={i}><span>{line.by === 'coo' ? 'COO' : 'Jij'}</span><p>{line.text}{line.center && <button onClick={() => onOpenCenter(line.center!, line.tab ?? 'overview')}>Open {line.center.name} →</button>}</p></article>)}</div>
+    <div className="coo-prompts"><button onClick={() => send('Geef me een overzicht: wat vraagt nu aandacht?')}>Wat vraagt aandacht?</button><button onClick={() => send('Help me met een open besluit')}>Help met een blokkade</button><button onClick={() => send('Hoe staat het met de videoscripts?')}>Waar staat het script?</button></div>
+    <form className="coo-compose" onSubmit={event => { event.preventDefault(); send(draft); }}><input value={draft} onChange={event => setDraft(event.target.value)} placeholder="Stel een vraag over alle eilanden…" /><button disabled={!draft.trim()}>Vraag COO ↑</button></form>
+    <small className="coo-note">COO reageert op de huidige app-status en voorbeelddata. Echte AI-coördinatie is nog niet gekoppeld.</small>
+  </section></div>;
 }
 
 function LoginCard({ onSuccess, setToast }: { onSuccess: () => void; setToast: (message: string) => void }) {
@@ -136,20 +193,23 @@ function Chart() { return <div className="chart"><div className="chart-axis"><sp
 function Revenue({ label, value, purple = false }: { label: string; value: string; purple?: boolean }) { return <div className="revenue-row"><span><i className={purple ? 'revenue-dot purple-dot' : 'revenue-dot'} />{label}</span><b>{value}</b></div>; }
 function VideoTable({ compact = false }: { compact?: boolean }) { return <div className={'video-table ' + (compact ? 'compact-table' : '')}><div className="video-tr table-head"><span>VIDEO</span><span>WEERGAVEN</span><span>GEM. BEKEKEN</span><span>LIKES</span><span>OMZET</span><span>TREND</span></div>{demoVideos.map((v, i) => <div className="video-tr" key={v[0]}><b className="video-name"><span className={'video-thumb thumb-' + i}>▶</span>{v[0]}</b><b>{v[1]}</b><span><i className="retention"><em style={{ width: v[2] }} /></i>{v[2]}</span><span>{v[3]}</span><b>{v[4]}</b><strong className="trend-up">↗ {v[5]}</strong></div>)}</div>; }
 
-function LabRoom({ center, state, tab, setTab, chat, draft, setDraft, sendMessage, onClose, onApproval, onStart }: { center: Center; state: State; tab: 'overview' | 'team' | 'chat' | 'reflection'; setTab: (t: 'overview' | 'team' | 'chat' | 'reflection') => void; chat: ChatLine[]; draft: string; setDraft: (s: string) => void; sendMessage: (text: string) => void; onClose: () => void; onApproval: (id: string, d: 'approve' | 'change', c?: string) => Promise<void>; onStart: () => void }) {
+function LabRoom({ center, state, tab, setTab, chat, draft, setDraft, sendMessage, onClose, onApproval, onStart }: { center: Center; state: State; tab: LabTab; setTab: (t: LabTab) => void; chat: ChatLine[]; draft: string; setDraft: (s: string) => void; sendMessage: (text: string) => void; onClose: () => void; onApproval: (id: string, d: 'approve' | 'change', c?: string) => Promise<void>; onStart: () => void }) {
   const team = teamByCenter[center.id] ?? teamByCenter.default;
   const approvals = state.approvals.filter(a => a.center === center.id && a.status === 'pending');
   const events = state.events.filter(e => e.center === center.id).slice(-6).reverse();
   const submit = (e: FormEvent) => { e.preventDefault(); sendMessage(draft); };
+  const tabs: Array<[LabTab, string]> = [['overview', 'Overzicht'], ['team', 'Team & stappen'], ['chat', 'Praat met ' + team.manager], ['reflection', 'Ontwikkeling & reflectie']];
+  if (center.id === 'script') tabs.push(['studio', 'AI Scriptstudio']);
   return <div className="lab-backdrop" onClick={onClose}><section className="lab-room" onClick={e => e.stopPropagation()}>
     <header className="lab-room-head"><button onClick={onClose}>← Terug naar eilandwereld</button><span className="lab-room-world">WERELD 01 · YOUTUBE SHORTS</span><span className="lab-room-status" style={{ color: colors[center.status] }}>● {statusNames[center.status] ?? center.status}</span></header>
-    <div className="lab-room-banner"><div className="lab-art"><span>✦</span><small>LAB {String(state.centers.findIndex(c => c.id === center.id) + 1).padStart(2, '0')}</small></div><div className="lab-room-title"><span className="eyebrow">{center.detail}</span><h2>{center.name}</h2><p>Manager {team.manager} · {team.role}</p></div><button className="lab-primary" onClick={onStart}>＋ Start nieuwe labrun</button></div>
-    <nav className="lab-room-tabs">{([['overview', 'Overzicht'], ['team', 'Team & stappen'], ['chat', 'Praat met ' + team.manager], ['reflection', 'Ontwikkeling & reflectie']] as const).map(([id, name]) => <button className={tab === id ? 'lab-tab-active' : ''} key={id} onClick={() => setTab(id)}>{name}</button>)}</nav>
+    <div className="lab-room-banner"><div className="lab-art"><span>✦</span><small>LAB {String(state.centers.findIndex(c => c.id === center.id) + 1).padStart(2, '0')}</small></div><div className="lab-room-title"><span className="eyebrow">{center.detail}</span><h2>{center.name}</h2><p>Manager {team.manager} · {team.role}</p></div>{center.id === 'script' && <button className="lab-primary studio-shortcut" onClick={() => setTab('studio')}>✎ Open Scriptstudio</button>}<button className="lab-primary" onClick={onStart}>＋ Start nieuwe labrun</button></div>
+    <nav className="lab-room-tabs">{tabs.map(([id, name]) => <button className={tab === id ? 'lab-tab-active' : ''} key={id} onClick={() => setTab(id)}>{name}</button>)}</nav>
     <div className="lab-room-content">
       {tab === 'overview' && <><div className="lab-summary"><article><span className="eyebrow">MANAGER</span><b>{team.manager}</b><small>{team.role}</small></article><article><span className="eyebrow">TEAM</span><b>{team.people.length} medewerkers</b><small>Eigen taken per processtap</small></article><article><span className="eyebrow">WACHT OP JOU</span><b>{approvals.length} besluiten</b><small>Jij houdt de eindregie</small></article></div><div className="lab-content-columns"><article className="lab-pane"><CardHeading eyebrow="WERK IN UITVOERING" title="Processtappen" /><StepList center={center} /></article><article className="lab-pane manager-card"><span className="manager-avatar">{team.people[0][2]}</span><span className="eyebrow">JOUW MANAGER</span><h3>{team.manager}</h3><p>Praat met mij over de richting van dit lab, wat je wilt ontwikkelen of wat we kunnen leren van de laatste cyclus.</p><button className="wide-action" onClick={() => setTab('chat')}>Open gesprek →</button></article></div></>}
       {tab === 'team' && <div className="lab-content-columns"><article className="lab-pane"><CardHeading eyebrow="JOUW TEAM" title="Manager & medewerkers" />{team.people.map((p, i) => <div className="staff-row" key={p[0]}><span className={'staff-avatar staff-' + i}>{p[2]}</span><span><b>{p[0]}</b><small>{p[1]}</small></span>{i === 0 && <em>MANAGER</em>}</div>)}</article><article className="lab-pane"><CardHeading eyebrow="PROCES" title="Wie doet wat?" /><StepList center={center} /></article></div>}
       {tab === 'chat' && <div className="chat-layout"><article className="chat-card"><div className="chat-header"><span className="manager-avatar">{team.people[0][2]}</span><span><b>{team.manager}</b><small>{team.role} · mockmanager</small></span><i>● Online</i></div><div className="chat-messages"><div className="chat-line manager-line"><span>{team.manager.slice(0, 1)}</span><p>Hoi! Ik ben {team.manager}, jouw manager van {center.name}. Waar wil je samen naar kijken?</p></div>{chat.map((m, i) => <div className={'chat-line ' + (m.by === 'you' ? 'you-line' : 'manager-line')} key={i}>{m.by === 'manager' && <span>{team.manager.slice(0, 1)}</span>}<p>{m.text}</p></div>)}</div><form className="chat-compose" onSubmit={submit}><input value={draft} onChange={e => setDraft(e.target.value)} placeholder="Bespreek een idee, vraag of feedback…" /><button disabled={!draft.trim()}>Verstuur ↑</button></form><small className="mock-note">Mockgesprek · gesprekken worden nog niet opgeslagen en sturen nog geen echte AI-opdracht.</small></article><aside className="chat-prompts"><span className="eyebrow">GESPREKSSTARTERS</span><button onClick={() => sendMessage('Ik wil dit lab verder ontwikkelen. Welke kleine verbetering raad je aan?')}>✦ <span><b>Ontwikkeling</b><small>Wat kan dit lab verbeteren?</small></span></button><button onClick={() => sendMessage('Laten we reflecteren op de vorige cyclus. Wat kunnen we leren?')}>◷ <span><b>Reflectie</b><small>Wat werkte en wat leren we?</small></span></button><button onClick={() => sendMessage('Ik heb een nieuw idee voor de volgende video.')}>✎ <span><b>Nieuw idee</b><small>Leg een idee voor aan je manager.</small></span></button></aside></div>}
       {tab === 'reflection' && <div className="lab-content-columns"><article className="lab-pane reflection-pane"><span className="eyebrow">CYCLUS {state.cycle} · DAG {state.day}</span><h3>Ontwikkelen door terug te kijken</h3><p>Bespreek met {team.manager} wat goed ging, wat je wilt verbeteren en welk experiment het team in de volgende cyclus kan uitvoeren.</p><div className="reflection-prompts"><button onClick={() => { setTab('chat'); sendMessage('Laten we reflecteren op de vorige cyclus. Wat werkte goed en wat kunnen we leren?'); }}>◷ Reflecteer op de vorige cyclus <span>→</span></button><button onClick={() => { setTab('chat'); sendMessage('Ik wil dit lab verder ontwikkelen. Stel een concreet experiment voor.'); }}>✦ Kies een ontwikkelpunt <span>→</span></button><button onClick={() => { setTab('chat'); sendMessage('Welke processtap levert nu de meeste waarde op en waarom?'); }}>⌁ Bespreek de processtappen <span>→</span></button></div><small className="mock-note">Dit zijn mockgesprekken; herinneringen en inzichten worden in deze demo nog niet bewaard.</small></article><article className="lab-pane"><CardHeading eyebrow="RECENTE REFLECTIES" title="Wat we meenemen" />{events.length ? events.map((e, i) => <div className="event-row" key={i}><i /><span><b>{e.message}</b><small>{e.at}</small></span></div>) : <p className="empty-state">Na een workflowstap verschijnt hier de activiteit van dit lab.</p>}</article></div>}
+      {tab === 'studio' && center.id === 'script' && <ScriptStudio />}
       {tab === 'overview' && approvals.map(a => <div className="lab-approval" key={a.id}><b>Jouw akkoord nodig · {a.task}</b><p>{a.payload}</p><button onClick={() => void onApproval(a.id, 'approve')}>Akkoord ✓</button><button className="quiet-btn" onClick={() => void onApproval(a.id, 'change', 'Pas dit aan en vraag mij daarna opnieuw om akkoord.')}>Wijziging vragen</button></div>)}
     </div>
   </section></div>;
