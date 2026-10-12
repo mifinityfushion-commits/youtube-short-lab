@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model World {
+  id        String   @id @default(cuid())
+  name      String
+  centers   Center[]
+  createdAt DateTime @default(now())
+}
+
+model Center {
+  id        String     @id @default(cuid())
+  key       String
+  name      String
+  status    String     @default("sleeping")
+  worldId   String
+  world     World      @relation(fields: [worldId], references: [id])
+  tasks     Task[]
+  events    Event[]
+  approvals Approval[]
+}
+
+model Task {
+  id            String   @id @default(cuid())
+  centerId      String
+  center        Center   @relation(fields: [centerId], references: [id])
+  title         String
+  status        String   @default("queued")
+  input         Json?
+  output        Json?
+  approvedInput Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Approval {
+  id        String    @id @default(cuid())
+  centerId  String
+  center    Center    @relation(fields: [centerId], references: [id])
+  taskId    String?
+  kind      String
+  status    String    @default("pending")
+  payload   Json
+  createdAt DateTime  @default(now())
+  resolvedAt DateTime?
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  centerId  String
+  center    Center   @relation(fields: [centerId], references: [id])
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model Video {
+  id           String        @id @default(cuid())
+  title        String
+  status       String        @default("draft")
+  assets       Asset[]
+  publications Publication[]
+  createdAt    DateTime      @default(now())
+}
+
+model Asset {
+  id              String  @id @default(cuid())
+  videoId         String
+  video           Video   @relation(fields: [videoId], references: [id])
+  platform        String
+  key             String?
+  status          String  @default("mock")
+  aspectRatio     String  @default("9:16")
+  durationSeconds Int?
+}
+
+model Publication {
+  id          String    @id @default(cuid())
+  videoId     String
+  video       Video     @relation(fields: [videoId], references: [id])
+  platform    String
+  mode        String    @default("mock")
+  status      String    @default("queued")
+  scheduledAt DateTime?
+  platformId  String?
+  error       String?
+}
+
+model PlatformConnection {
+  id              String   @id @default(cuid())
+  platform        String   @unique
+  mode            String   @default("mock")
+  encryptedTokens String?
+  lastError       String?
+  updatedAt       DateTime @updatedAt
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

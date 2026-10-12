@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shortlab
+      POSTGRES_PASSWORD: shortlab
+      POSTGRES_DB: shortlab
+    ports: ["5432:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortlab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  postgres:

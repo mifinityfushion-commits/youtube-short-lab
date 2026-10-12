@@ -1,0 +1,89 @@
+services:
+  - type: web
+    name: shortlab-web
+    runtime: static
+    buildCommand: npm ci && npm run build -w @shortlab/web
+    staticPublishPath: apps/web/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://shortlab-api.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+  - type: web
+    name: shortlab-api
+    runtime: node
+    buildCommand: npm ci && npm run build -w @shortlab/shared && npm run build -w @shortlab/api
+    startCommand: npm run start -w @shortlab/api
+    healthCheckPath: /health
+    preDeployCommand: npm --workspace @shortlab/api exec prisma migrate deploy
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: WEB_ORIGIN
+        value: https://shortlab-web.onrender.com
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shortlab-db
+          property: connectionString
+      - key: COOKIE_SECURE
+        value: "true"
+      - fromGroup: shortlab-secrets
+  - type: worker
+    name: shortlab-worker
+    runtime: docker
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shortlab-db
+          property: connectionString
+      - fromGroup: shortlab-secrets
+databases:
+  - name: shortlab-db
+    databaseName: shortlab
+    user: shortlab
+    plan: basic-256mb
+envVarGroups:
+  - name: shortlab-secrets
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD_HASH
+        value: ""
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: LLM_API_KEY
+        value: ""
+      - key: S3_ENDPOINT
+        value: ""
+      - key: S3_BUCKET
+        value: ""
+      - key: S3_REGION
+        value: ""
+      - key: S3_ACCESS_KEY_ID
+        value: ""
+      - key: S3_SECRET_ACCESS_KEY
+        value: ""
+      - key: YOUTUBE_CLIENT_ID
+        value: ""
+      - key: YOUTUBE_CLIENT_SECRET
+        value: ""
+      - key: TIKTOK_CLIENT_KEY
+        value: ""
+      - key: TIKTOK_CLIENT_SECRET
+        value: ""
+      - key: INSTAGRAM_APP_ID
+        value: ""
+      - key: INSTAGRAM_APP_SECRET
+        value: ""
+      - key: WHATSAPP_TOKEN
+        value: ""
+      - key: SMTP_URL
+        value: ""
+      - key: STORAGE_MODE
+        value: local
+      - key: LLM_MODE
+        value: mock
