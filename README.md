@@ -22,7 +22,7 @@ Render → New → Blueprint → kies repo → vul env group in → deploy.
 
 De Blueprint bouwt de statische Vite-app, API en Docker-worker, maakt PostgreSQL aan en voert `prisma migrate deploy` vóór deploy uit. De frontend gebruikt de API op `https://shortlab-api.onrender.com`; CORS staat alleen de web-origin toe en API-cookies zijn httpOnly, secure in productie en same-site. Pas `WEB_ORIGIN` aan als Render een andere web-hostnaam kiest.
 
-Maak voor Tahar een scrypt-hash in `salt:hex` formaat en zet die als `ADMIN_PASSWORD_HASH` in `shortlab-secrets`. Bijvoorbeeld met Node: `node -e "const c=require('node:crypto');const s=c.randomBytes(16).toString('hex');console.log(s+':'+c.scryptSync('jouw-wachtwoord',s,32).toString('hex'))"`. Zet ook `SESSION_SECRET` op minimaal 32 willekeurige tekens. Gebruik geen echte tokens in GitHub.
+Render genereert `SESSION_SECRET` en `TOKEN_ENCRYPTION_KEY` automatisch. Maak voor Tahar een scrypt-hash in `salt:hex` formaat en zet die als `ADMIN_PASSWORD_HASH` in `shortlab-secrets`. Bijvoorbeeld met Node: `node -e "const c=require('node:crypto');const s=c.randomBytes(16).toString('hex');console.log(s+':'+c.scryptSync('jouw-wachtwoord',s,32).toString('hex'))"`. Vul externe API-sleutels pas in wanneer je die koppelingen activeert. Gebruik geen echte tokens in GitHub.
 
 ## Omgevingsvariabelen
 
