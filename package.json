@@ -1,0 +1,26 @@
+{
+  "name": "youtube-short-lab",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "npm run build -w @shortlab/shared",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace @shortlab/api run dev",
+    "dev:web": "npm --workspace @shortlab/web run dev",
+    "dev:worker": "npm --workspace @shortlab/worker run dev",
+    "build": "npm run build -w @shortlab/shared && npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "dotenv -e .env -- npm --workspace @shortlab/api exec prisma migrate deploy",
+    "db:seed": "dotenv -e .env -- npm --workspace @shortlab/api exec prisma db seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "dotenv-cli": "^8.0.0",
+    "typescript": "^5.7.3"
+  }
+}
